@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "react-aria-detector",
+  "short_name": "react-aria-detector",
+  "description": "Detects React apps using React Aria as you browse.",
+  "author": "Rob Snow",
+  "version": "1.0",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-script.js"],
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_icon": {
+      "19": "images/icon19.png",
+      "38": "images/icon38.png"
+    },
+    "default_title": "React Aria fan found"
+  },
+  "icons": {
+    "16": "images/icon16.png",
+    "48": "images/icon48.png",
+    "128": "images/icon128.png"
+  }
+}
