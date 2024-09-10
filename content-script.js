@@ -26,7 +26,7 @@ function checkForReactAria() {
         mutations.forEach(function (mutation) {
           if (mutation.addedNodes) {
             for (let i = 0; i < mutation.addedNodes.length; i++) {
-              if (mutation.addedNodes[i].matches(selector)) {
+              if (mutation.addedNodes[i].matches?.(selector)) {
                 port.postMessage({reactAria: true});
                 observer.disconnect();
                 break;
