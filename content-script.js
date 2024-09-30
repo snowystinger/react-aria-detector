@@ -1,11 +1,18 @@
 var selector = '[id^=react-aria]';
 
 var port = chrome.runtime.connect({name: "react-aria-detector"});
+
+function foundReactAria() {
+  port.postMessage({reactAria: true});
+  let domain = window.location.hostname;
+  chrome.storage.local.set({[domain]: true});
+}
+
 function checkForReactAria() {
   var reactAriaElements = document.querySelectorAll(selector);
   // check SSR
   if (reactAriaElements.length > 0) {
-    port.postMessage({reactAria: true});
+    foundReactAria();
   } else {
     // check for delayed react rendering
     let promise = new Promise(function (resolve, reject) {
@@ -13,7 +20,7 @@ function checkForReactAria() {
         // wait for react to potentially load, then check again.
         reactAriaElements = document.querySelectorAll(selector);
         if (reactAriaElements.length > 0) {
-          port.postMessage({reactAria: true});
+          foundReactAria();
           resolve();
         } else {
           reject();
@@ -27,7 +34,7 @@ function checkForReactAria() {
           if (mutation.addedNodes) {
             for (let i = 0; i < mutation.addedNodes.length; i++) {
               if (mutation.addedNodes[i].matches?.(selector)) {
-                port.postMessage({reactAria: true});
+                foundReactAria();
                 observer.disconnect();
                 break;
               }
