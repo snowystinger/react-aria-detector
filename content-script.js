@@ -7,8 +7,10 @@ function foundReactAria() {
   let domain = window.location.hostname;
   chrome.storage.local.get('domains').then(function (entries) {
     let domains = entries.domains ?? [];
-    domains.push(domain);
-    chrome.storage.local.set({domains: domains});
+    if (!domains.includes(domain)) {
+      domains.push(domain);
+      chrome.storage.local.set({domains: domains});
+    }
   });
 }
 
