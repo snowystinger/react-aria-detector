@@ -8,7 +8,7 @@
     "build": "rm -rf ./dist && parcel build src/index.html --public-url='./'"
   },
   "dependencies": {
-    "@react-spectrum/s2": "^0.3.1",
+    "@react-spectrum/s2": "^0.4.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
