@@ -14,8 +14,24 @@ function foundReactAria() {
   });
 }
 
+let bannedDomains = [
+  'csb.app',
+  'localhost',
+  '127.0.0.1',
+  'local-credentialless',
+  'chromatic',
+  'stage.adobe',
+  'echosignstage',
+  'react-spectrum.adobe.com',
+];
+
 function checkForReactAria() {
   let domain = window.location.hostname;
+  for (let bannedDomain of bannedDomains) {
+    if (domain.includes(bannedDomain)) {
+      return;
+    }
+  }
   let observer;
   chrome.storage.onChanged.addListener(function (changes, namespace) {
     chrome.storage.local.get('pausedDomains').then(function (entries) {
