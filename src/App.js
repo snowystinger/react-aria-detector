@@ -75,18 +75,14 @@ export function App() {
     let [newIgnored, setNewIgnored] = useState('');
 
     let updateStateFromStorage = useCallback(() => {
+        // Read-only. The bannedDomains -> ignoredDomains migration and all writes
+        // happen in the background worker; the popup only reads and sends messages.
         chrome.storage.local.get(['domains', 'ignoredDomains', 'bannedDomains', 'pausedDomains', 'components']).then(function (entries) {
-            let ignored = entries.ignoredDomains;
-            if (!ignored && entries.bannedDomains) {
-                ignored = entries.bannedDomains.slice();
-                chrome.storage.local.set({ignoredDomains: ignored});
-                chrome.storage.local.remove('bannedDomains');
-            }
             setDomains(entries.domains ?? []);
-            setIgnoredDomains(ignored ?? []);
+            setIgnoredDomains(entries.ignoredDomains ?? entries.bannedDomains ?? []);
             setPausedDomains(entries.pausedDomains ?? []);
             setComponents(entries.components ?? {});
-        });
+        }).catch((e) => console.error('react-aria-detector: read storage', e));
     }, []);
 
     useEffect(() => {
@@ -98,60 +94,35 @@ export function App() {
         updateStateFromStorage();
     }, []);
 
+    // All mutations go through the background worker (the single serialized
+    // storage writer) so concurrent tabs/frames can't clobber each other.
     let deleteDomain = useCallback((domain) => {
-        chrome.storage.local.get(['domains', 'components']).then(function (entries) {
-            let domains = (entries.domains ?? []).filter(d => d !== domain);
-            let components = entries.components ?? {};
-            delete components[domain];
-            chrome.storage.local.set({domains, components});
-        });
+        chrome.runtime.sendMessage({type: 'prune', domain});
     }, []);
 
     let ignoreDomain = useCallback((domain) => {
-        let value = (domain || '').trim();
-        if (!value) {
-            return;
-        }
-        chrome.storage.local.get(['ignoredDomains', 'domains', 'components']).then(function (entries) {
-            let ignoredDomains = entries.ignoredDomains ?? [];
-            if (!ignoredDomains.includes(value)) {
-                ignoredDomains.push(value);
-            }
-            let domains = (entries.domains ?? []).filter(d => d !== value);
-            let components = entries.components ?? {};
-            delete components[value];
-            chrome.storage.local.set({ignoredDomains, domains, components});
-        });
+        chrome.runtime.sendMessage({type: 'ignore', domain});
     }, []);
 
     let unignoreDomain = useCallback((domain) => {
-        chrome.storage.local.get('ignoredDomains').then(function (entries) {
-            let ignoredDomains = (entries.ignoredDomains ?? []).filter(d => d !== domain);
-            chrome.storage.local.set({ignoredDomains});
-        });
+        chrome.runtime.sendMessage({type: 'unignore', domain});
     }, []);
 
     let pauseDomain = useCallback((domain) => {
-        chrome.storage.local.get('pausedDomains').then(function (entries) {
-            let pausedDomains = entries.pausedDomains ?? [];
-            if (!pausedDomains.includes(domain)) {
-                pausedDomains.push(domain);
-            }
-            chrome.storage.local.set({pausedDomains});
-        });
+        chrome.runtime.sendMessage({type: 'pause', domain});
     }, []);
 
     let unpauseDomain = useCallback((domain) => {
-        chrome.storage.local.get('pausedDomains').then(function (entries) {
-            let pausedDomains = (entries.pausedDomains ?? []).filter(d => d !== domain);
-            chrome.storage.local.set({pausedDomains});
-        });
+        chrome.runtime.sendMessage({type: 'unpause', domain});
     }, []);
 
     let addIgnored = useCallback(() => {
-        ignoreDomain(newIgnored);
+        let value = (newIgnored || '').trim();
+        if (value) {
+            chrome.runtime.sendMessage({type: 'ignore', domain: value});
+        }
         setNewIgnored('');
-    }, [newIgnored, ignoreDomain]);
+    }, [newIgnored]);
 
     let columns = useMemo(() => [{name: 'Domain', id: 'domain', isRowHeader: true}, {name: 'Actions', id: 'actions'}], []);
     let ignoredColumns = useMemo(() => [{name: 'Ignored domains', id: 'domain', isRowHeader: true}, {name: 'Actions', id: 'actions'}], []);

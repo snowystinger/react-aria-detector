@@ -1,6 +1,10 @@
 var selector = '[id^=react-aria]';
 
-var port = chrome.runtime.connect({name: "react-aria-detector"});
+function logError(context) {
+  return function (e) {
+    console.error('react-aria-detector: ' + context, e);
+  };
+}
 
 function collectComponents() {
   var els = document.querySelectorAll('[class*="react-aria-"], [id^="react-aria"]');
@@ -14,57 +18,22 @@ function collectComponents() {
   return Array.from(set).sort();
 }
 
+// All storage writes go through the background worker so concurrent frames/tabs
+// can't clobber each other's updates. Content scripts only read and send.
 function foundReactAria() {
-  port.postMessage({reactAria: true});
-  var domain = window.location.hostname;
-  var found = collectComponents();
-  chrome.storage.local.get(['domains', 'components']).then(function (entries) {
-    var domains = entries.domains ?? [];
-    var components = entries.components ?? {};
-    if (!domains.includes(domain)) {
-      domains.push(domain);
-    }
-    var prev = components[domain] ?? [];
-    components[domain] = Array.from(new Set(prev.concat(found))).sort();
-    chrome.storage.local.set({domains: domains, components: components});
+  chrome.runtime.sendMessage({
+    type: 'record',
+    domain: window.location.hostname,
+    components: collectComponents()
   });
 }
 
-// Returns the effective ignore list (defaults + stored), migrating any legacy
-// bannedDomains storage key into ignoredDomains once.
+// Effective ignore list (defaults + stored). Read-only: the one-time
+// bannedDomains -> ignoredDomains migration happens in the background worker.
 function getEffectiveIgnored() {
   return chrome.storage.local.get(['ignoredDomains', 'bannedDomains']).then(function (entries) {
-    var ignored = entries.ignoredDomains;
-    if (!ignored && entries.bannedDomains) {
-      ignored = entries.bannedDomains.slice();
-      chrome.storage.local.set({ignoredDomains: ignored});
-      chrome.storage.local.remove('bannedDomains');
-    }
-    ignored = ignored ?? [];
+    var ignored = entries.ignoredDomains ?? entries.bannedDomains ?? [];
     return globalThis.RAD.DEFAULT_IGNORED.concat(ignored);
-  });
-}
-
-// If this domain is (now) ignored, remove any recorded data for it.
-function pruneIfIgnored(domain) {
-  return getEffectiveIgnored().then(function (all) {
-    if (!globalThis.RAD.isIgnored(domain, all)) {
-      return;
-    }
-    return chrome.storage.local.get(['domains', 'components']).then(function (entries) {
-      var domains = entries.domains ?? [];
-      var components = entries.components ?? {};
-      var hadDomain = domains.includes(domain);
-      var hadComponents = Object.prototype.hasOwnProperty.call(components, domain);
-      // Only write when there is actually something to remove. Writing
-      // unconditionally would re-fire storage.onChanged and loop forever.
-      if (!hadDomain && !hadComponents) {
-        return;
-      }
-      domains = domains.filter(function (d) { return d !== domain; });
-      delete components[domain];
-      chrome.storage.local.set({domains: domains, components: components});
-    });
   });
 }
 
@@ -73,9 +42,7 @@ function checkForReactAria() {
   var observer;
 
   chrome.storage.onChanged.addListener(function (changes, namespace) {
-    // Only react to the keys that affect this content script. In particular,
-    // ignore our own domains/components writes so pruning cannot feed back
-    // into this listener and loop.
+    // Only react to the keys that affect this content script.
     if (!changes || (!changes.ignoredDomains && !changes.bannedDomains && !changes.pausedDomains)) {
       return;
     }
@@ -84,21 +51,22 @@ function checkForReactAria() {
         if (observer) {
           observer.disconnect();
         }
-        pruneIfIgnored(domain);
+        // Ask the background worker to remove any recorded data for this domain.
+        chrome.runtime.sendMessage({type: 'prune', domain: domain});
       }
-    });
+    }).catch(logError('ignore check on change'));
     chrome.storage.local.get('pausedDomains').then(function (entries) {
       var pausedDomains = entries.pausedDomains || [];
       if (pausedDomains.includes(domain) && observer) {
         console.log('React Aria detection paused on this domain. Disconnected observer.');
         observer.disconnect();
       }
-    });
+    }).catch(logError('paused check on change'));
   });
 
   getEffectiveIgnored().then(function (all) {
     if (globalThis.RAD.isIgnored(domain, all)) {
-      pruneIfIgnored(domain);
+      chrome.runtime.sendMessage({type: 'prune', domain: domain});
       return;
     }
 
@@ -154,19 +122,15 @@ function checkForReactAria() {
             });
           }
         }
-      });
-    });
-  });
+      }).catch(logError('domains read'));
+    }).catch(logError('paused read'));
+  }).catch(logError('ignore read'));
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  chrome.storage.local.get('pausedDomains').then(function (entries) {
-    var pausedDomains = entries.pausedDomains || [];
-    if (!pausedDomains.includes(window.location.hostname)) {
-      pausedDomains.push(window.location.hostname);
-      chrome.storage.local.set({pausedDomains: pausedDomains});
-    }
-  }, []);
+  if (message && message.action === 'pause') {
+    chrome.runtime.sendMessage({type: 'pause', domain: window.location.hostname});
+  }
 });
 
 checkForReactAria();
