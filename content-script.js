@@ -51,9 +51,17 @@ function pruneIfIgnored(domain) {
     if (!globalThis.RAD.isIgnored(domain, all)) {
       return;
     }
-    chrome.storage.local.get(['domains', 'components']).then(function (entries) {
-      var domains = (entries.domains ?? []).filter(function (d) { return d !== domain; });
+    return chrome.storage.local.get(['domains', 'components']).then(function (entries) {
+      var domains = entries.domains ?? [];
       var components = entries.components ?? {};
+      var hadDomain = domains.includes(domain);
+      var hadComponents = Object.prototype.hasOwnProperty.call(components, domain);
+      // Only write when there is actually something to remove. Writing
+      // unconditionally would re-fire storage.onChanged and loop forever.
+      if (!hadDomain && !hadComponents) {
+        return;
+      }
+      domains = domains.filter(function (d) { return d !== domain; });
       delete components[domain];
       chrome.storage.local.set({domains: domains, components: components});
     });
@@ -65,6 +73,12 @@ function checkForReactAria() {
   var observer;
 
   chrome.storage.onChanged.addListener(function (changes, namespace) {
+    // Only react to the keys that affect this content script. In particular,
+    // ignore our own domains/components writes so pruning cannot feed back
+    // into this listener and loop.
+    if (!changes || (!changes.ignoredDomains && !changes.bannedDomains && !changes.pausedDomains)) {
+      return;
+    }
     getEffectiveIgnored().then(function (all) {
       if (globalThis.RAD.isIgnored(domain, all)) {
         if (observer) {
