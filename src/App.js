@@ -1,4 +1,5 @@
 import {useCallback, useEffect, useState, useMemo} from "react";
+import '../shared.js';
 import {
     Provider,
     ActionButton,
@@ -13,7 +14,7 @@ import {
     Cell,
     Accordion,
     Disclosure,
-    DisclosureHeader,
+    DisclosureTitle,
     DisclosurePanel,
     ContextualHelp,
     Heading,
@@ -21,11 +22,19 @@ import {
     Footer,
     Text,
     DialogTrigger,
-    AlertDialog
+    AlertDialog,
+    Popover,
+    TagGroup,
+    Tag,
+    TextField,
+    ToastContainer,
+    ToastQueue
 } from '@react-spectrum/s2';
 import "@react-spectrum/s2/page.css";
 import './index.css';
 import {style} from "@react-spectrum/s2/style" with { type: "macro" };
+
+const {DEFAULT_IGNORED} = globalThis.RAD;
 
 async function setClipboard(text) {
     const type = "text/plain";
@@ -42,10 +51,10 @@ function renderEmptyState() {
     );
 }
 
-function renderBannedEmptyState() {
+function renderIgnoredEmptyState() {
     return (
         <div style={{padding: '16px', textAlign: 'center'}}>
-            No domains banned yet.
+            No domains ignored yet.
         </div>
     );
 }
@@ -60,18 +69,26 @@ function renderPausedEmptyState() {
 
 export function App() {
     let [domains, setDomains] = useState([]);
-    let [bannedDomains, setBannedDomains] = useState([]);
+    let [ignoredDomains, setIgnoredDomains] = useState([]);
     let [pausedDomains, setPausedDomains] = useState([]);
+    let [components, setComponents] = useState({});
+    let [newIgnored, setNewIgnored] = useState('');
+
     let updateStateFromStorage = useCallback(() => {
-        chrome.storage.local.get(['domains', 'bannedDomains', 'pausedDomains']).then(function (entries) {
-            let bannedDomains = entries.bannedDomains ?? [];
-            let pausedDomains = entries.pausedDomains ?? [];
-            let allKeys = entries.domains ?? [];
-            setDomains(allKeys);
-            setBannedDomains(bannedDomains);
-            setPausedDomains(pausedDomains);
-        }, []);
+        chrome.storage.local.get(['domains', 'ignoredDomains', 'bannedDomains', 'pausedDomains', 'components']).then(function (entries) {
+            let ignored = entries.ignoredDomains;
+            if (!ignored && entries.bannedDomains) {
+                ignored = entries.bannedDomains.slice();
+                chrome.storage.local.set({ignoredDomains: ignored});
+                chrome.storage.local.remove('bannedDomains');
+            }
+            setDomains(entries.domains ?? []);
+            setIgnoredDomains(ignored ?? []);
+            setPausedDomains(entries.pausedDomains ?? []);
+            setComponents(entries.components ?? {});
+        });
     }, []);
+
     useEffect(() => {
         chrome.storage.onChanged.addListener(function (changes, namespace) {
             updateStateFromStorage();
@@ -81,11 +98,66 @@ export function App() {
         updateStateFromStorage();
     }, []);
 
+    let deleteDomain = useCallback((domain) => {
+        chrome.storage.local.get(['domains', 'components']).then(function (entries) {
+            let domains = (entries.domains ?? []).filter(d => d !== domain);
+            let components = entries.components ?? {};
+            delete components[domain];
+            chrome.storage.local.set({domains, components});
+        });
+    }, []);
+
+    let ignoreDomain = useCallback((domain) => {
+        let value = (domain || '').trim();
+        if (!value) {
+            return;
+        }
+        chrome.storage.local.get(['ignoredDomains', 'domains', 'components']).then(function (entries) {
+            let ignoredDomains = entries.ignoredDomains ?? [];
+            if (!ignoredDomains.includes(value)) {
+                ignoredDomains.push(value);
+            }
+            let domains = (entries.domains ?? []).filter(d => d !== value);
+            let components = entries.components ?? {};
+            delete components[value];
+            chrome.storage.local.set({ignoredDomains, domains, components});
+        });
+    }, []);
+
+    let unignoreDomain = useCallback((domain) => {
+        chrome.storage.local.get('ignoredDomains').then(function (entries) {
+            let ignoredDomains = (entries.ignoredDomains ?? []).filter(d => d !== domain);
+            chrome.storage.local.set({ignoredDomains});
+        });
+    }, []);
+
+    let pauseDomain = useCallback((domain) => {
+        chrome.storage.local.get('pausedDomains').then(function (entries) {
+            let pausedDomains = entries.pausedDomains ?? [];
+            if (!pausedDomains.includes(domain)) {
+                pausedDomains.push(domain);
+            }
+            chrome.storage.local.set({pausedDomains});
+        });
+    }, []);
+
+    let unpauseDomain = useCallback((domain) => {
+        chrome.storage.local.get('pausedDomains').then(function (entries) {
+            let pausedDomains = (entries.pausedDomains ?? []).filter(d => d !== domain);
+            chrome.storage.local.set({pausedDomains});
+        });
+    }, []);
+
+    let addIgnored = useCallback(() => {
+        ignoreDomain(newIgnored);
+        setNewIgnored('');
+    }, [newIgnored, ignoreDomain]);
+
     let columns = useMemo(() => [{name: 'Domain', id: 'domain', isRowHeader: true}, {name: 'Actions', id: 'actions'}], []);
-    let bannedColumns = useMemo(() => [{name: 'Banned domains', id: 'domain', isRowHeader: true}, {name: 'Actions', id: 'actions'}], []);
+    let ignoredColumns = useMemo(() => [{name: 'Ignored domains', id: 'domain', isRowHeader: true}, {name: 'Actions', id: 'actions'}], []);
     let pausedColumns = useMemo(() => [{name: 'Paused domains', id: 'domain', isRowHeader: true}, {name: 'Actions', id: 'actions'}], []);
     let items = useMemo(() => domains.map(domain => ({domain, id: domain})), [domains]);
-    let bannedItems = useMemo(() => bannedDomains.map(domain => ({domain, id: domain})), [bannedDomains]);
+    let ignoredItems = useMemo(() => ignoredDomains.map(domain => ({domain, id: domain})), [ignoredDomains]);
     let pausedItems = useMemo(() => pausedDomains.map(domain => ({domain, id: domain})), [pausedDomains]);
 
     return (
@@ -97,16 +169,19 @@ export function App() {
                     <Content>
                         <Text>
                             <p>
-                                This extension detects websites using React Aria and allows you to manage the list of domains as well as generate a report.
+                                This extension detects websites using React Aria and lets you manage the list of domains and generate a report.
                             </p>
                             <p>
-                                Excluding domains means that they won't show up in the auto generated report that you can get by clicking the "Copy" button.
+                                Click a domain to see which React Aria components were detected on it.
                             </p>
                             <p>
-                                Pausing for a domain will disconnect the mutation observer and will not try to find React Aria on the domain again until it is unpaused and the page is refreshed.
+                                Ignoring a domain removes it, keeps it out of the report, and stops it from being detected again. Some domains (localhost, our staging servers, etc.) are always ignored.
                             </p>
                             <p>
-                                Reset storage will clear everything in the entire extension.
+                                Pausing a domain disconnects the mutation observer and will not look for React Aria again until it is unpaused and the page is refreshed.
+                            </p>
+                            <p>
+                                Reset storage clears everything in the entire extension.
                             </p>
                         </Text>
                     </Content>
@@ -116,72 +191,56 @@ export function App() {
             </div>
             <Accordion allowsMultipleExpanded defaultExpandedKeys={['react-aria-fans']}>
                 <Disclosure id="react-aria-fans">
-                    <DisclosureHeader>
-                        <h2 id="table-title" className={style({flexGrow: 0, flexShrink: 0, font: 'heading', margin: 0})}>Domains using React Aria</h2>
-                    </DisclosureHeader>
+                    <DisclosureTitle level={2}>Domains using React Aria ({domains.length})</DisclosureTitle>
                     <DisclosurePanel>
                         <DomainTable
                             items={items}
                             columns={columns}
-                            aria-labelledby="table-title"
+                            components={components}
+                            aria-label="Domains using React Aria"
                             actions={[
-                                {name: 'Delete', onAction: (domain) => {
-                                    chrome.storage.local.remove(domain);
-                                }}, {name: 'Ban', onAction: (domain) => {
-                                    chrome.storage.local.get('bannedDomains').then(function (entries) {
-                                        let bannedDomains = entries.bannedDomains || [];
-                                        bannedDomains.push(domain);
-                                        chrome.storage.local.set({bannedDomains});
-                                    });
-                                }}, {name: 'Pause', onAction: (domain) => {
-                                    chrome.storage.local.get('pausedDomains').then(function (entries) {
-                                        let pausedDomains = entries.pausedDomains || [];
-                                        pausedDomains.push(domain);
-                                        chrome.storage.local.set({pausedDomains});
-                                    });
-                                }}]}
-                                renderEmptyState={renderEmptyState}
-                            />
-                    </DisclosurePanel>
-                </Disclosure>
-                <Disclosure id="banned-domains">
-                    <DisclosureHeader>
-                        <h2 id="banned-table-title" className={style({flexGrow: 0, flexShrink: 0, font: 'heading', margin: 0})}>Domains excluded</h2>
-                    </DisclosureHeader>
-                    <DisclosurePanel>
-                        <DomainTable
-                            items={bannedItems}
-                            columns={bannedColumns}
-                            aria-labelledby="banned-table-title"
-                            actions={[
-                                {name: 'Unban', onAction: (domain) => {
-                                    chrome.storage.local.get('bannedDomains').then(function (entries) {
-                                        let bannedDomains = entries.bannedDomains || [];
-                                        bannedDomains = bannedDomains.filter(d => d !== domain);
-                                        chrome.storage.local.set({bannedDomains});
-                                    });
-                                }}]}
-                            renderEmptyState={renderBannedEmptyState}
+                                {name: 'Delete', onAction: deleteDomain},
+                                {name: 'Ignore', onAction: ignoreDomain},
+                                {name: 'Pause', onAction: pauseDomain}
+                            ]}
+                            renderEmptyState={renderEmptyState}
                         />
                     </DisclosurePanel>
                 </Disclosure>
+                <Disclosure id="ignored-domains">
+                    <DisclosureTitle level={2}>Ignored ({ignoredDomains.length})</DisclosureTitle>
+                    <DisclosurePanel>
+                        <div className={style({display: 'flex', gap: 8, marginBottom: 8, alignItems: 'end'})}>
+                            <TextField
+                                aria-label="Add a domain to ignore"
+                                placeholder="example.com"
+                                value={newIgnored}
+                                onChange={setNewIgnored}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { addIgnored(); } }}
+                                styles={style({flexGrow: 1})}
+                            />
+                            <Button variant="secondary" onPress={addIgnored}>Add</Button>
+                        </div>
+                        <DomainTable
+                            items={ignoredItems}
+                            columns={ignoredColumns}
+                            aria-label="Ignored domains"
+                            actions={[{name: 'Unignore', onAction: unignoreDomain}]}
+                            renderEmptyState={renderIgnoredEmptyState}
+                        />
+                        <Text styles={style({font: 'ui-sm', color: 'gray-600'})}>
+                            Always ignored: {DEFAULT_IGNORED.join(', ')}
+                        </Text>
+                    </DisclosurePanel>
+                </Disclosure>
                 <Disclosure id="paused-domains">
-                    <DisclosureHeader>
-                        <h2 id="paused-table-title" className={style({flexGrow: 0, flexShrink: 0, font: 'heading', margin: 0})}>Domains on pause</h2>
-                    </DisclosureHeader>
+                    <DisclosureTitle level={2}>Paused ({pausedDomains.length})</DisclosureTitle>
                     <DisclosurePanel>
                         <DomainTable
                             items={pausedItems}
                             columns={pausedColumns}
-                            aria-labelledby="paused-table-title"
-                            actions={[
-                                {name: 'Unpause', onAction: (domain) => {
-                                    chrome.storage.local.get('pausedDomains').then(function (entries) {
-                                        let pausedDomains = entries.pausedDomains || [];
-                                        pausedDomains = pausedDomains.filter(d => d !== domain);
-                                        chrome.storage.local.set({pausedDomains});
-                                    });
-                                }}]}
+                            aria-label="Paused domains"
+                            actions={[{name: 'Unpause', onAction: unpauseDomain}]}
                             renderEmptyState={renderPausedEmptyState}
                         />
                     </DisclosurePanel>
@@ -203,7 +262,6 @@ export function App() {
                 </DialogTrigger>
                 <Button variant="secondary" onPress={() => {
                     chrome.tabs.query({active: true, currentWindow: true}, function(tabs){
-                        // send message so the content-script can tell us the domain more easily
                         if (tabs[0]) {
                             chrome.tabs.sendMessage(tabs[0].id, {action: "pause"});
                         }
@@ -211,8 +269,10 @@ export function App() {
                 }}>Pause domain</Button>
                 <Button variant="accent" onPress={() => {
                     setClipboard(`😎 Report generated by RAD 😎\nSites using React Aria: ${domains.join(', ')}`);
+                    ToastQueue.positive('Report copied', {timeout: 3000});
                 }}>Copy</Button>
             </ButtonGroup>
+            <ToastContainer />
         </Provider>
     );
 }
@@ -221,12 +281,13 @@ function DomainTable(props) {
     let {
         items,
         columns,
-        'aria-labelledby': ariaLabelledBy,
+        'aria-label': ariaLabel,
         actions,
-        renderEmptyState
+        renderEmptyState,
+        components
     } = props;
     return (
-        <TableView styles={style({height: 256})} aria-labelledby={ariaLabelledBy} overflowMode="wrap">
+        <TableView styles={style({height: 256})} aria-label={ariaLabel} overflowMode="wrap">
             <TableHeader columns={columns}>
                 {(column) => (
                     <Column isRowHeader={column.isRowHeader}>{column.name}</Column>
@@ -237,8 +298,29 @@ function DomainTable(props) {
                     <Row columns={columns}>
                         {(column) => {
                             let domain = item.domain;
-                            if(column.id === 'domain') {
-                                return <Cell>{domain}</Cell>
+                            if (column.id === 'domain') {
+                                if (components) {
+                                    let comps = components[domain] ?? [];
+                                    return (
+                                        <Cell>
+                                            <DialogTrigger>
+                                                <ActionButton isQuiet aria-label={`Components used on ${domain}`}>{domain}</ActionButton>
+                                                <Popover>
+                                                    <div className={style({padding: 12, maxWidth: '[320px]'})}>
+                                                        {comps.length > 0 ? (
+                                                            <TagGroup aria-label={`Components used on ${domain}`}>
+                                                                {comps.map((c) => <Tag key={c} id={c}>{c}</Tag>)}
+                                                            </TagGroup>
+                                                        ) : (
+                                                            <Text>No components recorded.</Text>
+                                                        )}
+                                                    </div>
+                                                </Popover>
+                                            </DialogTrigger>
+                                        </Cell>
+                                    );
+                                }
+                                return <Cell>{domain}</Cell>;
                             } else {
                                 return (
                                     <Cell>
@@ -255,55 +337,5 @@ function DomainTable(props) {
                 )}
             </TableBody>
         </TableView>
-    )
+    );
 }
-
-//
-// let [domains, setDomains] = useState([]);
-// let [bannedDomains, setBannedDomains] = useState([]);
-// useEffect(() => {
-//     chrome.storage.local.get().then(function (entries) {
-//         let allKeys = Object.keys(entries).filter(key => !reservedStorageKeys.includes(key));
-//         setDomains(allKeys);
-//         console.log('all keys:', allKeys)
-//     }, []);
-//     chrome.storage.local.get('bannedDomains').then(function (entries) {
-//         let bannedDomains = entries.bannedDomains || [];
-//         setBannedDomains(bannedDomains);
-//     });
-// }, []);
-// let columns = useMemo(() => ['Domain', 'Actions'], []);
-// let items = useMemo(() => domains.map(domain => ({domain, id: domain})), [domains]);
-// return (
-//     <div style={{maxWidth: '300px', maxHeight: '600px', display: 'flex', flexDirection: 'column', gap: '8px'}}>
-//         <h1 id="table-title">Domains using React Aria</h1>
-//         <Table aria-labelledby="table-title">
-//             <TableHeader columns={columns}>
-//                 {(column) => (
-//                     <Column width={150} minWidth={150} isRowHeader={column.isRowHeader}>{column.name}</Column>
-//                 )}
-//             </TableHeader>
-//             <TableBody items={items} renderEmptyState={renderEmptyState}Z>
-//                 {item => (
-//                     <Row columns={columns}>
-//                         <Cell>{item.domain}</Cell>
-//                         <Cell>
-//                             <div style={{display: 'flex'}}>
-//                                 <ActionButton onPress={() => {
-//                                     chrome.storage.local.remove(domain);
-//                                     setDomains(domains.filter(d => d !== domain));
-//                                 }}>Delete</ActionButton>
-//                                 <ActionButton onPress={() => {
-//                                     chrome.storage.local.get('bannedDomains').then(function (entries) {
-//                                         let bannedDomains = entries.bannedDomains || [];
-//                                         bannedDomains.push(domain);
-//                                         chrome.storage.local.set({bannedDomains});
-//                                         setBannedDomains(bannedDomains);
-//                                     });
-//                                 }}>Ban</ActionButton>
-//                             </div>
-//                         </Cell>
-//                     </Row>
-//                 )}
-//             </TableBody>
-//         </Table>
