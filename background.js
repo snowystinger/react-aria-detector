@@ -115,7 +115,7 @@ const HANDLERS = {
     unpause: (msg) => unpauseDomain(msg.domain)
 };
 
-chrome.runtime.onMessage.addListener((msg, sender) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!msg || !msg.type) {
         return;
     }
@@ -125,8 +125,18 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
         chrome.action.setBadgeBackgroundColor({color: 'green', tabId: sender.tab.id});
     }
     let handler = HANDLERS[msg.type];
-    if (handler) {
-        enqueue(() => handler(msg));
+    if (!handler) {
+        return;
     }
-    // Fire-and-forget: senders don't await a response.
+    // Returning true (and responding after the queued write resolves) keeps the
+    // MV3 service worker alive until the storage write actually finishes, so
+    // mutations are never dropped when the worker would otherwise go idle.
+    enqueue(() => handler(msg)).then(function () {
+        try {
+            sendResponse({ok: true});
+        } catch (e) {
+            // The sender (e.g. a closed popup) may no longer be listening.
+        }
+    });
+    return true;
 });

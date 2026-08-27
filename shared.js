@@ -11,9 +11,10 @@
     'stage.adobe',
     'echosignstage',
     'react-spectrum.adobe.com',
+    'experience-qa.adobe',
     'd1pzu54gtk2aed.cloudfront.net',
     'd5iwopk28bdhl.cloudfront.net',
-    'reactspectrum.blob.core.windows.net'
+    'reactspectrum.blob'
   ];
 
   function isIgnored(hostname, ignoredList) {
